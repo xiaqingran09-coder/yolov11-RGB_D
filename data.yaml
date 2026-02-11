@@ -1,0 +1,16 @@
+# 修改前 (Windows 绝对路径 - 错误)
+# path: C:/Users/Len/Desktop/my_data/yolo_dataset
+
+# 修改后 (相对路径 - 正确)
+# "." 代表当前项目根目录
+path: ./my_data
+
+# 子路径保持不变
+train: images/train
+val: images/val
+
+names:
+  0: yellow
+  1: log
+  2: cherry
+nc: 3
