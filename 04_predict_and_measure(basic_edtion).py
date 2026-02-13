@@ -1,146 +1,96 @@
 import cv2
 import numpy as np
+import math
+import os
 from ultralytics import YOLO
 
-# 配置区域
 MODEL_PATH = "runs/detect/cube_detect/yellow_block_v19/weights/best.pt"
-TEST_IMAGE_PATH = "my_data/JPEGImages/image_134.jpg"
+TEST_IMAGE_PATH = "my_data/JPEGImages/image_1.jpg"
 CAMERA_INTRINSICS = (424.7, 419.3, 320.0, 200.0)
 BLOCK_SIZE_MM = 20.0
 
+CAMERA_HEIGHT_MM = 400.0  # 相机镜头离地高度
+CAMERA_OFFSET_FORWARD_MM = 50.0  # 相机相对于机械臂原点的前后偏移
+CAMERA_PITCH_DEGREE = 35.0  # 相机往下低头的角度
+# 0度=平视前方，90度=垂直俯视地面
 
-def get_cube_center_optimized(rgb_roi, depth_roi, bbox, intrinsics, block_size):
-    # 1. HSV 颜色过滤 (提取黄色区域)
-    hsv = cv2.cvtColor(rgb_roi, cv2.COLOR_BGR2HSV)
-    lower_yellow = np.array([15, 80, 80])
-    upper_yellow = np.array([45, 255, 255])
-    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
-
-    # 2. 深度有效性过滤
-    valid_depth_mask = (depth_roi > 0)
-    final_mask = mask & valid_depth_mask
-
-    # 如果有效点太少，视为噪声
-    if np.count_nonzero(final_mask) < 10:
-        return None
-
-    # 3. 提取有效点的 3D 数据
-    ys, xs = np.where(final_mask)
-    zs = depth_roi[ys, xs]
-
-    # 简单的离群值过滤 (只取中位数附近的深度)
-    z_median = np.median(zs)
-    # 容差设为方块边长的一半
-    z_valid_idx = np.abs(zs - z_median) < (block_size * 0.5)
-
-    if np.count_nonzero(z_valid_idx) == 0:
-        return None
-
-    # 再次筛选
-    ys = ys[z_valid_idx]
-    xs = xs[z_valid_idx]
-    zs = zs[z_valid_idx]
-
-    # 4. 像素坐标 -> 相机坐标
-    # 还原到整张图的坐标系
-    u_global = xs + bbox[0]
-    v_global = ys + bbox[1]
-
+def calculate_world_coord_on_floor(u, v, intrinsics):
+    """
+    基于“物体在地面上”的假设，从像素坐标 (u,v) 反推世界坐标 (X,Y)
+    """
     fx, fy, cx, cy = intrinsics
-    X_points = (u_global - cx) * zs / fx
-    Y_points = (v_global - cy) * zs / fy
-    Z_points = zs
 
-    # 5. 计算体心 (表面质心 + Z轴补偿)
-    body_center = np.array([
-        np.mean(X_points),
-        np.mean(Y_points),
-        np.mean(Z_points) + (block_size / 2.0)  # 往内部推一半边长
-    ])
+    angle_pixel_y = math.atan((v - cy) / fy)
+    pitch_rad = math.radians(CAMERA_PITCH_DEGREE)
+    total_angle = pitch_rad + angle_pixel_y
+    if total_angle <= 0.01: total_angle = 0.01
 
-    return body_center
+    obj_height = BLOCK_SIZE_MM / 2.0
+    distance_horizontal = (CAMERA_HEIGHT_MM - obj_height) / math.tan(total_angle)
+    X_world = distance_horizontal + CAMERA_OFFSET_FORWARD_MM
+    Y_world = distance_horizontal * (cx - u) / fx
+    Z_world = obj_height
+
+    return np.array([X_world, Y_world, Z_world])
 
 
 def run_prediction():
-    # 1. 加载 YOLO 模型
-    print(f"正在加载模型: {MODEL_PATH} ...")
-    try:
-        model = YOLO(MODEL_PATH)
-    except Exception as e:
-        print(f"错误: 找不到模型文件，请检查路径。详细信息: {e}")
+    print(f"加载模型: {MODEL_PATH} ...")
+    if not os.path.exists(MODEL_PATH):
+        print(f"错误: 模型不存在")
+        return
+    model = YOLO(MODEL_PATH)
+
+    if os.path.exists(TEST_IMAGE_PATH):
+        frame = cv2.imread(TEST_IMAGE_PATH)
+    else:
+        print("图片不存在")
         return
 
-    # 2. 读取图片
-    frame = cv2.imread(TEST_IMAGE_PATH)
-    if frame is None:
-        print(f"错误: 无法读取图片 {TEST_IMAGE_PATH}")
-        return
-
-    print("警告: 正在使用模拟深度数据 (全图 600mm)，仅供测试流程！")
-    depth_image = np.ones((frame.shape[0], frame.shape[1]), dtype=np.uint16) * 600
-    # =========================================
-
-    # 3. YOLO 推理
+    # YOLO 推理
     results = model(frame, conf=0.6)
 
-    print("\n" + "=" * 30)
-    print("开始输出检测结果")
-    print("=" * 30)
-
-    # ... (前面的代码不变) ...
+    print("\n" + "=" * 50)
+    print(f"坐标系: [X: 前进] [Y: 左侧] [Z: 垂直向上]")
+    print(f"计算模式: 地面投影 (假设相机下倾 {CAMERA_PITCH_DEGREE} 度)")
+    print("=" * 50)
 
     for result in results:
         for i, box in enumerate(result.boxes):
             x1, y1, x2, y2 = map(int, box.xyxy[0])
-            w = x2 - x1
-            h = y2 - y1
-            area = w * h
 
-            if area > 8000:
-                print(f"跳过大面积误检 (Area: {area})")
-                continue
+            # 简单的过滤
+            if (x2 - x1) * (y2 - y1) > 15000: continue
+            if x1 < 5 or y1 < 5 or x2 > 635 or y2 > 395: continue
 
-            if x1 < 5 or y1 < 5 or x2 > 635 or y2 > 395:
-                print(f"跳过边缘误检 (Edge)")
-                continue
             cls_id = int(box.cls[0])
-            label = model.names[cls_id]
+            if model.names[cls_id] == 'yellow':
+                u_center = (x1 + x2) / 2.0
+                v_center = (y1 + y2) / 2.0
 
-            # 只计算黄色方块
-            if label == 'yellow':
-                # 裁剪 ROI
-                roi_rgb = frame[y1:y2, x1:x2]
-                roi_depth = depth_image[y1:y2, x1:x2]
-
-                # === 核心调用：计算体心 ===
-                center_3d = get_cube_center_optimized(
-                    roi_rgb, roi_depth, (x1, y1), CAMERA_INTRINSICS, BLOCK_SIZE_MM
+                center_world = calculate_world_coord_on_floor(
+                    u_center, v_center, CAMERA_INTRINSICS
                 )
 
-                if center_3d is not None:
-                    # 格式化坐标字符串
-                    coord_text = f"X:{center_3d[0]:.1f} Y:{center_3d[1]:.1f} Z:{center_3d[2]:.1f}"
+                coord_str = f"X:{center_world[0]:.1f} Y:{center_world[1]:.1f} Z:{center_world[2]:.1f}"
+                print(f"[目标 {i}] | 坐标: {coord_str}")
 
-                    # 1. 终端打印 (Read Out)
-                    print(f"[物体 {i}] {label} | 体心坐标: {coord_text}")
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.circle(frame, (int(u_center), int(v_center)), 5, (0, 0, 255), -1)
+                cv2.putText(frame, coord_str, (x1, y1 - 25), 0, 0.5, (0, 255, 255), 2)
 
-                    # 2. 图片绘制
-                    # 画框
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    # 画中心点
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-                    # 写坐标文字
-                    cv2.putText(frame, coord_text, (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        save_filename = "result_ground_projection.jpg"
+        cv2.imwrite(save_filename, frame)
+        dir_path = os.path.dirname(os.path.abspath(__file__))
+        save_path = os.path.join(dir_path, "result_final.jpg")
+        cv2.imwrite(save_path, frame)
+        print(f"图片保存在: {save_path}")
 
-    print("=" * 30 + "\n")
-
-    # 显示结果图
-    save_path = "result_prediction.jpg"
-    cv2.imwrite(save_path, frame)
-    print(f"检测完成！结果图已保存为: {save_path}")
-    print("请在左侧文件列表中找到该图片并双击查看。")
+        print("\n" + "=" * 50)
+        print(f"检测完成！")
+        print(f"因为在服务器环境无法弹窗，结果图已保存为: {save_filename}")
+        print(f"请在 PyCharm 左侧文件列表中找到它，并双击查看。")
+        print("=" * 50)
 
 
 if __name__ == '__main__':
