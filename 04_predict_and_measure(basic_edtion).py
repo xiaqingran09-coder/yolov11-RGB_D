@@ -15,9 +15,9 @@ CAMERA_PITCH_DEGREE = 35.0  # 相机往下低头的角度
 # 0度=平视前方，90度=垂直俯视地面
 
 def calculate_world_coord_on_floor(u, v, intrinsics):
-    """
-    基于“物体在地面上”的假设，从像素坐标 (u,v) 反推世界坐标 (X,Y)
-    """
+
+    #基于“物体在地面上”的假设，从像素坐标 (u,v) 反推世界坐标 (X,Y)
+ 
     fx, fy, cx, cy = intrinsics
 
     angle_pixel_y = math.atan((v - cy) / fy)
@@ -95,3 +95,4 @@ def run_prediction():
 
 if __name__ == '__main__':
     run_prediction()
+
