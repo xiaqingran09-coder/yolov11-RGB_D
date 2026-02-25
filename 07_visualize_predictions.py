@@ -53,10 +53,8 @@ def visualize_model_predictions(model_path, val_images_path, num_samples=4):
 
 
 if __name__ == "__main__":
-    # 请修改为你的实际路径
-    # 模型路径
     my_model = "runs/detect/cube_detect/yellow_block_v19/weights/best.pt"
-    # 验证集图片文件夹
     my_val_imgs = "my_data/JPEGImages"  # 或者 "my_data/images/val"
+
 
     visualize_model_predictions(my_model, my_val_imgs, num_samples=4)
