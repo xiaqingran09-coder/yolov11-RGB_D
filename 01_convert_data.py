@@ -2,7 +2,6 @@ import xml.etree.ElementTree as ET
 import os
 import glob
 
-# 配置你的类别名称（必须与你的 classes.names 一致）
 CLASSES = ['yellow', 'log', 'cherry']
 
 
@@ -22,7 +21,6 @@ def convert_annotation(xml_file, output_path):
         cls_id = CLASSES.index(cls)
         xmlbox = obj.find('bndbox')
 
-        # 坐标转换逻辑: (xmin, xmax, ymin, ymax) -> (x_center, y_center, w, h)
         b = (float(xmlbox.find('xmin').text), float(xmlbox.find('xmax').text),
              float(xmlbox.find('ymin').text), float(xmlbox.find('ymax').text))
 
@@ -35,7 +33,6 @@ def convert_annotation(xml_file, output_path):
     out_file.close()
 
 
-# 设置你的路径
 xml_dir = r'C:\Users\Len\Desktop\my_data\Annotations'  # XML文件夹路径
 txt_dir = r'C:\Users\Len\Desktop\my_data\labels'  # 输出txt文件夹路径
 
@@ -46,4 +43,5 @@ print(f"开始转换 {len(xml_files)} 个文件...")
 for xml_file in xml_files:
     file_name = os.path.basename(xml_file).replace('.xml', '.txt')
     convert_annotation(xml_file, os.path.join(txt_dir, file_name))
+
 print("转换完成！")
